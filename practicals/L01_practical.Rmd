@@ -1,0 +1,297 @@
+---
+title: "L01 Practical"
+author: "Callum Arnold"
+date: "2021-11-22"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    number_sections: FALSE
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.dim = c(10, 8), fig.align = "center")
+```
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(here)
+library(hrbrthemes)
+library(kableExtra)
+library(DT)
+library(outbreaks)
+library(ggrepel)
+library(skimr)
+library(apyramid)
+```
+
+```{r}
+theme_set(theme_minimal())
+```
+
+# Outbreak 1
+## Overview
+
+```{r}
+outbreak_one <- measles_hagelloch_1861 %>%
+  tibble()
+```
+
+```{r}
+skim(outbreak_one)
+```
+
+## Incidence
+
+```{r}
+outbreak_one_counts <- outbreak_one %>%
+  count(date_of_prodrome) %>%
+  rename(daily_cases = n)
+```
+
+```{r}
+head(outbreak_one_counts)
+```
+
+```{r}
+ggplot(outbreak_one_counts, aes(x = date_of_prodrome, y = daily_cases)) +
+  geom_col() +
+  scale_x_date(date_labels = "%b %d %Y") +
+  labs(
+    title = "Measles Outbreak",
+    x = "Date of Symptom Onsent",
+    y = "Number of Cases (daily)"
+    )
+```
+
+## Demographics
+### Facet Plot
+
+```{r}
+outbreak_one %>%
+  mutate(
+    gender = fct_recode(gender, female = "f", male = "m"),
+    class = fct_recode(class, class_0 = "0", class_1 = "1", class_2 = "2")
+    ) %>%
+  ggplot(aes(x = age, fill = gender)) +
+  geom_histogram(position = "dodge") +
+  facet_wrap(~class, ncol = 1) +
+  scale_x_continuous(breaks = seq(0, max(outbreak_one$age), 2)) +
+  labs(
+    title = "Age distribution by gender and class",
+    x = "Age in Years",
+    y = "Number of cases"
+  ) +
+  scale_fill_ipsum()
+```
+
+### Age Pyramid
+
+```{r}
+outbreak_one %>%
+  mutate(
+    age_fct = factor(age, 1:15),
+    gender = fct_recode(gender, female = "f", male = "m"),
+    class = fct_recode(class, class_0 = "0", class_1 = "1", class_2 = "2")
+    ) %>%
+  age_pyramid(age_group = age_fct, split_by = gender, stack_by = class) +
+  scale_fill_ipsum()
+```
+
+### Class dynamics over time
+
+```{r}
+outbreak_one_class_counts <- outbreak_one %>%
+  count(date_of_prodrome, class) %>%
+  mutate(
+    class = fct_recode(class, class_0 = "0", class_1 = "1", class_2 = "2")
+    ) %>%
+  rename(daily_cases = n)
+```
+
+```{r}
+outbreak_one_class_counts %>%
+  ggplot(aes(x = date_of_prodrome, y = daily_cases, fill = class)) +
+  geom_col() +
+  scale_x_date(date_labels = "%b %d %Y") +
+  labs(
+    title = "Class dynamics over time",
+    x = "Date of Symptom Onsent",
+    y = "Number of Cases (daily)"
+  ) +
+  scale_fill_ipsum()
+```
+
+# Outbreak 2
+
+```{r}
+outbreak_two <- readxl::read_excel(
+  here::here("data", "ebola_sierraleone_2014.xlsx")
+  ) %>%
+  mutate(across(contains("date"), ~lubridate::as_date(.x)))
+```
+
+```{r}
+skim(outbreak_two)
+```
+
+## Basic Epi Curve
+
+```{r}
+outbreak_two_counts <- outbreak_two %>%
+  count(date_of_onset) %>%
+  rename(daily_cases = n)
+```
+
+```{r}
+outbreak_two_counts %>%
+  ggplot(aes(x = date_of_onset, y = daily_cases)) +
+  geom_col() +
+  scale_x_date(date_labels = "%b %d %Y") +
+  labs(
+    title = "Ebola outbreak",
+    x = "Date of Symptom Onsent",
+    y = "Number of Cases (daily)"
+  ) +
+  scale_fill_ipsum()
+```
+
+## Cases by District
+
+```{r}
+outbreak_two %>%
+  count(status, district) %>%
+  ggplot(aes(x = n, y = district, fill = status)) +
+  geom_col() +
+  scale_fill_ipsum() +
+  labs(
+    title = "Cases by District",
+    x = "Number of Cases",
+    y = "District",
+    fill = "Case Status"
+  )
+```
+
+```{r}
+outbreak_two %>%
+  count(status, district) %>%
+  pivot_wider(
+    names_from = status,
+    values_from = n
+  ) %>%
+  mutate(
+    confirmed_pct = round(100 * confirmed / sum(confirmed), 4),
+    suspected_pct = round(100 * suspected / sum(suspected), 4)
+  )
+```
+
+```{r}
+outbreak_two %>%
+  count(date_of_onset, district) %>%
+  rename(daily_cases = n) %>%
+  ggplot(aes(x = date_of_onset, y = daily_cases, fill = district)) +
+  geom_col() +
+  scale_x_date(date_labels = "%b %d %Y") +
+  labs(
+    title = "Ebola outbreak",
+    x = "Date of Symptom Onsent",
+    y = "Number of Cases (daily)"
+  ) +
+  scale_fill_viridis_d()
+```
+
+```{r}
+outbreak_two %>%
+  count(date_of_onset, district) %>%
+  rename(daily_cases = n) %>%
+  ggplot(aes(x = date_of_onset, y = daily_cases)) +
+  geom_col() +
+  scale_x_date(date_labels = "%b %d %Y") +
+  labs(
+    title = "Ebola outbreak",
+    x = "Date of Symptom Onsent",
+    y = "Number of Cases (daily)"
+  ) +
+  facet_wrap(district ~ .)
+```
+
+## Age and Gender Distributions
+
+```{r}
+outbreak_two_age_grp <- outbreak_two %>%
+  mutate(age_grp = cut(
+    age, breaks = pretty(age, n = 10), include.lowest = TRUE
+    ))
+```
+
+```{r}
+outbreak_two_age_grp %>%
+  mutate(sex = fct_recode(sex, female = "F", male = "M")) %>%
+  age_pyramid(age_group = "age_grp", split_by = "sex", stack_by = "status") +
+  labs(
+    title = "Age pyramid of Ebola cases",
+    subtitle = "Sierra Leone Outbreak, 2014",
+    x = "Age group",
+    y = "Number of cases",
+    fill = "Case Status"
+  ) +
+  scale_fill_ipsum()
+```
+
+```{r}
+outbreak_two %>%
+  count(status, district, sex) %>%
+  ggplot(aes(x = n, y = district, fill = status)) +
+  geom_col(position = "dodge") +
+  scale_fill_ipsum() +
+  labs(
+    title = "Distribution of genders by district",
+    x = "Number of cases",
+    y = "District",
+    fill = NULL
+  )
+```
+
+```{r}
+prop_ci <- function(k, n, result = c("both", "lower", "upper"), conf = 0.95) {
+  if(n == 0) {
+    out <- c(0, 1)
+  } else {
+    out <- binom.test(k, n, conf.level = conf)$conf.int
+    result <- match.arg(result)
+  }
+  if (result == "both") {
+    result <- c("lower", "upper")
+  }
+  names(out) <- c("lower", "upper")
+  out <- out[result]
+
+  out
+}
+
+prop_ci <- Vectorize(prop_ci)
+```
+
+```{r}
+outbreak_two %>%
+  drop_na(sex) %>%
+  count(district, sex) %>%
+  pivot_wider(names_from = sex, values_from = n) %>%
+  mutate(
+    total = F + M,
+    male_pct = M / total,
+    male_lwr_ci = prop_ci(M, total, "lower"),
+    male_upr_ci = prop_ci(M, total, "upper")
+  ) %>%
+  ggplot(aes(x = male_pct, y = fct_reorder(district, male_pct))) +
+  geom_vline(xintercept = 0.5, color = "#686767", linetype = 2) +
+  geom_errorbar(aes(xmin = male_lwr_ci, xmax = male_upr_ci)) +
+  geom_point(fill = "#cf3945", color = "black", size = 3, shape = 21) +
+  labs(
+    title = "Percentage Males by District",
+    x = "Percentage",
+    y = "District"
+  )
+```
