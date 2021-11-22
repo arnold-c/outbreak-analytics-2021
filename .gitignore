@@ -1,3 +1,16 @@
+# Data files
+*.xlsx
+*.xls
+*.csv
+*.txt
+*.doc
+*.docx
+*.ppt
+*.pptx
+*.pdf
+*.fa
+*.DS_Store
+
 # History files
 .Rhistory
 .Rapp.history
