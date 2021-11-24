@@ -1,0 +1,141 @@
+---
+title: "Simulating fluctuations in estimated CFR with sample size"
+author: "Thibaut Jombart"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::material:
+    highlight: kate
+    css: !expr here::here('css', 'style.css')
+link-citations: yes
+---
+
+
+```{r settings, echo = FALSE}
+knitr::opts_chunk$set(
+  fig.width = 8,
+  fig.height = 5,
+  collapse = TRUE
+)
+```
+
+
+
+# Proof of concept
+
+Simulating the outcomes of cases using a known case fatality ratio (CFR) using
+**R** is easy. This process is by definition a Binomial draw, which is
+implemented by the function `rbinom`. See `?rbinom` for details of how this
+function works. The arguments of the function are simple:
+
+```{r dbinom}
+args(rbinom)
+```
+
+* `n` is the number of times we want to draw from the Binomial distribution
+* `prob` is the probability, here, of death
+* `size` is the size of the sample, here, the number of cases
+
+So that if we want to simulate the number of death amongst 12 cases, with a CFR
+of 40%, we would then use something like:
+
+```{r simple_simul}
+
+# set the random seed
+set.seed(1)
+
+# do the 'experiment' once
+rbinom(n = 1, size = 12, prob = 0.4)
+
+# repeat that 'sampling' 20 times
+rbinom(n = 20, size = 12, prob = 0.4)
+
+# do it 1 million times, and examine the resulting distribution
+x <- rbinom(n = 1e6, size = 12, prob = 0.4)
+barplot(table(x),
+        col = "#7A9548",
+        border = "white",
+        xlab = "Number of deaths",
+        ylab = "Frequency")
+
+```
+
+
+
+# Making our own function
+
+The following function wraps up the principle above, with the added tweaks:
+
+* arguments have a clearer epidemiological meaning
+* the output reports the number of cases, the number of deaths, survivors, and
+  the associated ratio
+  
+```{r simulate_outcome}
+
+# Define the new function
+
+simulate_outcome <- function(n = 1,
+                             n_cases,
+                             cfr) {
+  ## simulate outcomes using binomial sampling
+  res <- rbinom(n = n,
+                prob = cfr,
+                size = n_cases)
+  
+  ## shape final data.frame
+  ### note: as the last object is returned, we do not need to assign the created
+  ### data.frame to any object
+  data.frame(cases = n_cases,
+             deaths = res,
+             survivors = n_cases - res,
+             ratio = res / n_cases)
+}
+
+
+# try it
+simulate_outcome(1, 100, 0.2)
+simulate_outcome(10, 60, 0.33)
+
+```
+
+
+
+
+# Simulating estimated CFR over time
+
+To show how sample size affects the estimation of CFR, we contrast the following
+situations, all assuming a true CFR of 20% over a period of 90 days:
+
+* 5 daily cases
+* 10 daily cases
+* 100 daily cases
+
+*dplyr* and *ggplot2* will be used to reorganise and display the results
+
+
+```{r simulations}
+library(tidyverse)
+
+# run simulations
+sim_5_cases <- simulate_outcome(90, n_cases = 5, cfr = 0.2)
+sim_10_cases <- simulate_outcome(90, n_cases = 10, cfr = 0.2)
+sim_100_cases <- simulate_outcome(90, n_cases = 100, cfr = 0.2)
+
+# bind them into a single data.frame
+sims <- bind_rows(sim_5_cases, sim_10_cases, sim_100_cases) %>%
+  mutate(cases = factor(cases)) %>%
+  group_by(cases) %>% 
+  mutate(day = 1:n()) %>% # add 'day' variable
+  select(day, everything()) # reorder data to have day first
+glimpse(sims)
+
+# plot results
+ggplot(sims, aes(x = day, y = ratio)) +
+  theme_bw() +
+  geom_line(color = "#DF7416") +
+  facet_grid(cases ~ .) +
+  geom_hline(yintercept = 0.2, color = "grey", linetype = 2) +
+  labs(title = "Simulating fluctuations in of estimated CFR",
+       x = "Day", y = "Estimated CFR",
+       subtitle = "for 5, 10, and 100 daily cases - true CFR: 0.2")
+
+```

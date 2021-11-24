@@ -1,0 +1,58 @@
+---
+title: "L02 Notes"
+author: "Callum Arnold"
+date: "2021-11-23"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    number_sections: FALSE
+    code_folding: hide
+---
+
+# Critiquing Plots
+## Example 1
+
+- Mortality % starts late and and ends early
+- Increasing number of "unknown"
+  - Differentiate between unable to observe outcome and unable to follow up
+- Would be good to see CIs on %
+- How is % calculated (does it include unknowns?)
+  - IFR vs CFR
+    - Likely underestimating the number of cases so % will be overestimated
+- What is the contribution of different locations to total?
+- What is the delay between case confirmation and outcome?
+  - Could be identifying cases too late
+- Stacked plot makes it hard to see mortality numbers
+
+## Example 2
+
+- Want to know raw numbers for burden
+- Want to how the % was calculated
+  - How were cases identified?
+  - What is the spatial breakdown
+- Not particularly usable as not clear how calculated and wide CIs
+
+## Example 3
+
+- Large fluctuations week on week in each location
+  - Likely due to small number of data points than true representation of
+  underlying case finding ability
+  - No CIs, which would probably be very wide
+- Would be good to have absolute numbers
+- Missing data is an issue
+  - Don't all have the same date ranges
+- Might want to smooth over wider time ranges to see more trends
+
+# Estimating the Generation Time
+
+- Can't observe the generation time, so estimate using the serial interval
+- Fitting process:
+  - Select a known distribution e.g. Normal, Gamma etc
+  - Find parameters best matching the data e.g. mean, variance
+  - Report the corresponding **distribution and parameters**
+- Continuous distributions tend to be most flexible (e.g. Gamma)
+  - Not necessarily directly applicable to data
+  - Need to discretise the distribution
+    - $p(a \le x < b) = p(y = a)$
+    - `{discrete}` RECON package does this for us

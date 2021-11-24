@@ -1,0 +1,312 @@
+---
+title: "L02 Practical"
+author: "Callum Arnold"
+date: "2021-11-22"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    number_sections: FALSE
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.dim = c(10, 8), fig.align = "center")
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(janitor)
+library(here)
+library(hrbrthemes)
+library(kableExtra)
+library(DT)
+library(skimr)
+library(outbreaks)
+library(incidence2)
+library(epicontacts)
+library(epitrix)
+```
+
+```{r}
+theme_set(theme_minimal())
+```
+
+```{r}
+measles_data <- measles_hagelloch_1861 %>%
+  tibble()
+```
+
+```{r}
+skim(measles_data)
+```
+
+# Building an Epicurve
+## Incidence
+
+```{r}
+raw_incidence <- incidence(
+  measles_data,
+  date_of_prodrome,
+  interval = "week",
+  groups = c(gender, class)
+  )
+
+facet_plot(
+  raw_incidence,
+  fill = gender,
+  facets = class,
+  show_cases = TRUE
+  ) +
+  scale_fill_viridis_d(na.value = "black") +
+  labs(
+    title = "Epicurve of the Hagelloch 1861 measles outbreak",
+    subtitle = "Stratified by class and gender",
+    x = "Date of onset",
+    y = "Number of cases (daily)"
+  )
+```
+
+## Cumulative Incidence
+
+```{r}
+raw_incidence %>%
+  cumulate() %>%
+  facet_plot(
+    fill = gender,
+    facets = class
+    # show_cases = TRUE
+  ) +
+  scale_fill_viridis_d(na.value = "black") +
+  labs(
+    title = "Cumulative Epicurve of the Hagelloch 1861 measles outbreak",
+    subtitle = "Stratified by class",
+    x = "Date of onset",
+    y = "Number of cases (daily)"
+  )
+```
+
+# Estimating delays
+
+```{r}
+measles_data <- measles_data %>%
+  mutate(delay_rash = as.integer(date_of_rash - date_of_prodrome))
+```
+
+```{r}
+ggplot(measles_data, aes(x = delay_rash)) +
+  geom_bar(fill = "#d15656") +
+  labs(
+    title = "Empirical distribution of delays from onset to rash",
+    x = "Days from onset of symptoms to rash",
+    y = "Number of cases"
+    )
+```
+
+```{r}
+delay_rash_fit <- measles_data %>%
+  pull(delay_rash) %>%
+  epitrix::fit_disc_gamma()
+
+delay_rash_fit
+```
+
+```{r}
+delay_rash_comparison <- measles_data %>%
+  count(delay_rash) %>%
+  complete(delay_rash = 0:15, fill = list(n = 0)) %>%
+  mutate(
+    prop = n / sum(n),
+    prop_dist = delay_rash_fit$distribution$d(delay_rash)
+    )
+```
+
+```{r}
+ggplot(delay_rash_comparison, aes(x = delay_rash)) +
+  geom_col(aes(y = prop), fill = "#d15656") +
+  geom_line(aes(y = prop_dist)) +
+  labs(
+    title = "Empirical vs Esimated distribution of delays from onset to rash",
+    x = "Days from onset of symptoms to rash",
+    y = "Proportion/probability"
+    )
+```
+
+# Estimating severity
+
+```{r}
+measles_data <- measles_data %>%
+  mutate(outcome = if_else(is.na(date_of_death), "recovered", "dead"))
+```
+
+```{r}
+tabyl(measles_data$outcome)
+```
+
+# Visualising transmission chains
+
+```{r}
+measles_contacts <- measles_data %>%
+  select(infector, case_ID)
+```
+
+```{r}
+measles_chains <- make_epicontacts(
+  linelist = measles_data,
+  contacts = measles_contacts,
+  id = "case_ID",
+  from = "infector",
+  to = "case_ID",
+  directed = TRUE
+)
+```
+
+```{r}
+measles_chains
+```
+
+```{r}
+plot(measles_chains)
+```
+
+```{r}
+all_ids  <- measles_chains %>%
+  get_id(which = "all") %>%
+  na.omit()
+```
+
+```{r}
+measles_data %>%
+  count(infector) %>%
+  complete(
+    infector = all_ids,
+    fill = list(n = 0)
+  ) %>%
+  ggplot(aes(x = n)) +
+  geom_bar(fill = "#18415a") +
+  labs(
+    title = "Distribution of case reproduction numbers",
+    x = "Number of secondary cases",
+    y = "Frequency"
+  )
+```
+
+```{r}
+measles_chains %>%
+  vis_epicontacts(
+    node_color = "family_ID",
+    node_shape = "gender",
+    shapes = c("m" = "male", "f" = "female")
+    )
+```
+
+# Estimating the serial interval
+
+```{r}
+measles_data <- measles_data %>%
+  mutate(
+    serial_interval = as.integer(date_of_prodrome - date_of_prodrome[infector])
+  )
+
+# Could also use the following code to estimate the serial interval
+get_pairwise(measles_chains, "date_of_prodrome")
+```
+
+```{r}
+serial_interval_fit <- measles_data %>%
+  pull(serial_interval) %>%
+  epitrix::fit_disc_gamma()
+```
+
+```{r}
+serial_interval_fit
+```
+
+```{r}
+serial_interval_comparison <- measles_data %>%
+  count(serial_interval) %>%
+  complete(serial_interval = 0:20, fill = list(n = 0)) %>%
+  mutate(
+    prop = n / sum(n),
+    prop_dist = serial_interval_fit$distribution$d(serial_interval)
+    )
+```
+
+```{r}
+ggplot(serial_interval_comparison, aes(x = serial_interval)) +
+  geom_col(aes(y = prop), fill = "#2b4885") +
+  geom_line(aes(y = prop_dist)) +
+  labs(
+    title = "Empirical vs Esimated distribution of delays from onset to rash",
+    x = "Days from onset of symptoms to rash",
+    y = "Proportion/probability"
+    )
+```
+
+# Transmission chains: further investigations
+
+```{r}
+get_pairwise(measles_chains, "gender") %>%
+  tabyl()
+```
+
+```{r}
+get_pairwise(measles_chains, "gender", f = table) %>%
+  chisq.test()
+```
+
+```{r}
+get_pairwise(measles_chains, "class", f = table) %>%
+  as_tibble() %>%
+  rename(infector = "values.from", infectee = "values.to") %>%
+  ggplot(aes(x = infectee, y = infector)) +
+  geom_tile(aes(fill = n)) +
+  scale_fill_viridis_c() +
+  labs(title = "Tranmission patterns by class")
+```
+
+```{r}
+get_pairwise(measles_chains, "age", f = table) %>%
+  as_tibble() %>%
+  rename(infector = "values.from", infectee = "values.to") %>%
+  ggplot(aes(x = infectee, y = infector)) +
+  geom_tile(aes(fill = n)) +
+  scale_fill_viridis_c() +
+  labs(title = "Tranmission patterns by age")
+```
+
+```{r}
+# Indicate if person infected by someone in their family
+prop_same <- function(a, b) {
+  mean(a == b, na.rm = TRUE)
+}
+
+# Indicate if person infected by someone in their family
+prop_same_perm <- function(a, b) {
+  perm_a <- sample(a, replace = FALSE)
+  mean(perm_a == b, na.rm = TRUE)
+}
+
+prop_same_fam <- measles_chains %>%
+  get_pairwise(attribute = "family_ID",
+               f = prop_same)
+
+prop_same_fam_ref <- purrr::map_dbl(
+  1:999,
+  function(.x) {
+    get_pairwise(measles_chains,
+                 attribute = "family_ID",
+                 f = prop_same_perm)
+  }
+)
+
+prop_same_fam / mean(prop_same_fam_ref)
+## [1] 21.39722
+
+qplot(prop_same_fam_ref, geom = "histogram") +
+  theme_bw() +
+  geom_vline(xintercept = prop_same_fam, color = "#E03F57", size = 1) +
+  labs(x = "Proportion of transmission within the same family",
+       y = "Frequency")
+```
