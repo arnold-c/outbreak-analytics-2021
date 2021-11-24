@@ -1,0 +1,303 @@
+---
+title: "L03 Practical"
+author: "Callum Arnold"
+date: "2021-11-22"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    number_sections: FALSE
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.dim = c(10, 8), fig.align = "center")
+```
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(here)
+library(hrbrthemes)
+library(skimr)
+library(kableExtra)
+library(DT)
+library(outbreaks)
+library(linelist)
+library(earlyR)
+library(i2extras)
+library(projections)
+library(epicontacts)
+```
+
+```{r}
+theme_set(theme_minimal())
+```
+
+# EVD Simulated Outbreak
+## Data Cleaning
+
+```{r}
+evd_linelist_raw <- here::here("data", "phm_evd_linelist_2017-10-27.xlsx") %>%
+  rio::import()
+
+evd_contacts_raw <-  here::here("data", "phm_evd_contacts_2017-10-27.xlsx") %>%
+  rio::import()
+
+cleaning_rules <- here::here("data", "phm_evd_cleaning_rules.xlsx") %>%
+  rio::import()
+```
+
+```{r}
+evd_linelist_raw
+```
+
+```{r}
+evd_contacts_raw
+```
+
+```{r}
+cleaning_rules
+```
+
+```{r}
+evd_linelist <- evd_linelist_raw %>%
+  linelist::clean_data(wordlist = cleaning_rules) %>%
+  mutate(across(contains("date"), guess_dates))
+
+evd_linelist
+```
+
+```{r}
+evd_contacts <- evd_contacts_raw %>%
+  linelist::clean_data()
+
+evd_contacts
+```
+
+## Examine transmission chains
+
+```{r}
+evd_chains <- make_epicontacts(
+  linelist = evd_linelist,
+  contacts = evd_contacts,
+  id = "id",
+  from = "source_case_id",
+  to = "case_id",
+  directed = TRUE
+)
+```
+
+```{r}
+plot(
+  evd_chains,
+  node_shape = "sex",
+  node_color = "location",
+  shapes = c(male = "male", female = "female", unknown = "question-circle")
+)
+```
+
+## Examining incidence curves
+
+```{r}
+evd_incidence <- incidence::incidence(
+  evd_linelist$date_of_onset,
+  last_date = "2017-10-27"
+  )
+
+plot(evd_incidence, show_cases = TRUE)
+```
+
+## Estimating the growth rate (r)
+
+```{r}
+evd_growth <- evd_incidence %>%
+  incidence::fit()
+```
+
+```{r}
+plot(evd_incidence, show_cases = TRUE, fit = evd_growth)
+```
+
+## Estimating the reproduction number (R)
+
+```{r}
+evd_reproduction <- get_R(
+  evd_incidence,
+  si_mean = 15.3,
+  si_sd = 9.3
+)
+```
+
+```{r}
+plot(evd_reproduction) +
+  geom_vline(xintercept = 1, color = "#af3939")
+```
+
+```{r}
+plot(evd_reproduction, "lambdas")
+```
+
+## Short term forecasting
+
+```{r}
+evd_projection <- project(
+  evd_incidence,
+  R = sample_R(evd_reproduction, 5000),
+  si = evd_reproduction$si,
+  n_sim = 5000,
+  n_days = 14,
+  R_fix_within = TRUE
+)
+```
+
+```{r}
+plot(evd_incidence) %>%
+  add_projections(evd_projection, quantiles = c(0.1, 0.25, 0.5, 0.75, 0.9)) +
+  scale_x_date() +
+  labs(
+    x = "Date of symptom onset"
+  )
+```
+
+```{r}
+apply(evd_projection, 1, summary)
+```
+
+```{r}
+apply(evd_projection, 1, function(x) mean(x > 0))
+```
+
+# UK COVID-19
+## Data Cleaning
+
+```{r}
+covid_eng <- here::here("data", "covid_admissions_uk_2020_10_24.xlsx") %>%
+  rio::import() %>%
+  tibble() %>%
+  mutate(date = lubridate::as_date(date))
+
+covid_eng
+```
+
+```{r}
+covid_eng %>%
+  group_by(region) %>%
+  summarise(cases = sum(n))
+```
+
+```{r}
+covid_eng %>%
+  group_by(region, org_code) %>%
+  summarise(cases = sum(n)) %>%
+  ggplot(aes(x = cases)) +
+  geom_histogram() +
+  facet_wrap(region ~.) +
+  labs(
+    title = "COVID-19 admissions by NHS region",
+    x = "Number of COVID-19 cases in a single trust",
+    y = "Frequency"
+  )
+```
+
+## Epidemic curves
+
+```{r}
+covid_incidence <- incidence2::incidence(
+  covid_eng,
+  date,
+  interval = "week",
+  groups = region,
+  count = n
+  )
+```
+
+```{r}
+summary(covid_incidence)
+```
+
+```{r}
+covid_incidence %>%
+  plot(fill = region, col_pal = muted, angle = 45, legend = "bottom") +
+  labs(title = "Weekly incidence of COVID-19 hospital admissions in England")
+```
+
+```{r}
+covid_incidence %>%
+  facet_plot(col_pal = muted, angle = 45, date_format = "%d%m%Y") +
+  labs(
+    title = "Weekly incidence of COVID-19 hospital admissions in England by region"
+    )
+```
+
+## Growth rates
+
+```{r}
+covid_incidence_recent <- incidence2::incidence(
+  covid_eng,
+  date,
+  groups = region,
+  count = n
+  ) %>%
+  keep_last(4 * 7) %>%
+  keep_first(3 * 7)
+```
+
+```{r}
+summary(covid_incidence_recent)
+```
+
+```{r}
+facet_plot(covid_incidence_recent)
+```
+
+```{r}
+covid_negbin_fit <- covid_incidence_recent %>%
+  i2extras::fit_curve(model = "negbin")
+```
+
+```{r}
+plot(covid_negbin_fit)
+```
+
+```{r}
+covid_negbin_growth <- covid_negbin_fit %>%
+  i2extras::growth_rate(growth_decay_time = TRUE)
+
+covid_negbin_growth
+```
+
+```{r}
+min_date <- min(covid_incidence_recent$date_index)
+max_date <- max(covid_incidence_recent$date_index)
+
+# covid_incidence_recent %>%
+#   incidence2::get_dates() %>%
+#   min()
+
+covid_negbin_growth %>%
+  ggplot(aes(x = r, y = fct_reorder(region, r))) +
+  geom_errorbar(aes(xmin = r_lower, xmax = r_upper), width = 0.2) +
+  geom_point(color = "#7c1073", size = 3) +
+  geom_vline(aes(xintercept = 0), linetype = 2, color = "#3b3b3b") +
+  labs(
+    title = "Estimated daily growth rate of COVID-19 in England by region",
+    subtitle = glue::glue(
+      "based on hospital admissions, {min_date} - {max_date}"
+      )
+  )
+```
+
+```{r}
+covid_negbin_growth %>%
+  ggplot(aes(x = time, y = fct_reorder(region, time))) +
+  geom_errorbar(aes(xmin = time_lower, xmax = time_upper), width = 0.2) +
+  geom_point(color = "#7c1073", size = 3) +
+  geom_vline(aes(xintercept = 0), linetype = 2, color = "#3b3b3b") +
+  labs(
+    title = "Estimated doubling time of COVID-19 in England by region",
+    subtitle = glue::glue(
+      "based on hospital admissions, {min_date} - {max_date}"
+      )
+  )
+```

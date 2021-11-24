@@ -9,7 +9,13 @@ if (interactive() && Sys.getenv("RSTUDIO") == "") {
       .vsc.browser(httpgd::hgd_url(history = FALSE), viewer = "2")
     })
   }
-  source(file.path(Sys.getenv(if (.Platform$OS.type == "windows") "USERPROFILE" else "HOME"), ".vscode-R", "init.R"))
+  source(
+    file.path(
+      Sys.getenv(
+        if (.Platform$OS.type == "windows") "USERPROFILE" else "HOME"), 
+        ".vscode-R", "init.R"
+        )
+      )
 }
 
 paint::mask_print()

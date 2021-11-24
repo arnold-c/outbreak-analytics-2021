@@ -1,0 +1,205 @@
+---
+title: "Simulating the impact of delays on epidemic curves"
+author: "Thibaut Jombart"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::material:
+    highlight: kate
+    css: !expr here::here('css', 'style.css')
+link-citations: yes
+---
+
+
+```{r settings, echo = FALSE}
+knitr::opts_chunk$set(
+  fig.width = 8,
+  fig.height = 5,
+  collapse = TRUE
+)
+```
+
+
+
+# Rationale of the simulations
+
+Here we use a simple model to simulate epidemic growth for 30 days so that:
+
+* the initial number of cases on day 0 is 10
+* incidence of new cases multiplies by a average growth rate of 1.1 each day
+* cases on a given day are generated from a Poisson distribution
+
+Once we have simulated the number of cases on days 0, 1, 2, ..., 30, we generate
+corresponding dates of infection for every case. From there, we will simulate
+the dates of symptom onset and of reporting of the case using simple uniform
+distributions.
+
+
+
+
+# Simulating the number of cases
+
+The code below implements the approach outlined above:
+
+1. compute the average number of daily cases with 10 initial cases and a daily
+   growth rate of 1.1
+2. use this average to draw cases from a Poisson distribution using `rpois`
+3. create a vector of dates of infection of every cases, and store it in a
+   `tibble`
+
+
+```{r simulate_cases}
+
+## load useful packages
+library(tidyverse)
+library(incidence2)
+
+
+## step 1: compute average cases
+days <- 0:30
+r <- 0.1
+mean_cases <- 10 * (1 + r) ^(days)
+mean_cases
+
+## step 2: draw cases from Poisson
+cases <- rpois(n = length(mean_cases), lambda = mean_cases)
+
+
+## step 3: create dates of infection for these cases
+date_infection <- rep(days, cases)
+data <- tibble(date_infection)
+data
+
+## make incidence object and plot
+data %>%
+  incidence(date_infection) %>%
+  plot() +
+  labs(title = "Epicurve by date of infection",
+       x = "Date of infection")
+
+```
+
+
+
+
+# Simulating onset of symptoms and reporting
+
+Here, we use will add random delays to each date of infection to simulate the
+dates of onset of symptoms, and the dates of reporting (when cases are notified
+in the surveillance system). We use simple distributions for the delays:
+
+* *incubation period*: delays from 1 to 14 days, uniformly distributed
+* *notification delay*: delays from 1 to 4 days, uniformly distributed
+
+The custom function `sim_delay` will implement these distributions.
+
+```{r delays}
+
+#  Function simulating incubation times
+
+## This uses uniform delays with specified min and max
+## `n` is the number of delays to simulate
+sim_delay <- function(n, min_delay = 1, max_delay = 10) {
+  delays <- seq(min_delay, max_delay, by = 1L)
+  sample(delays, n, replace = TRUE)
+}
+
+# apply the function to create new variables for dates of onset and reporting
+data <- data %>%
+  mutate(date_onset = date_infection + sim_delay(n(), max_delay = 14),
+         date_report = date_onset + sim_delay(n(), max_delay = 4)
+         )
+
+
+# visualise the 3 epidemic curves
+## reformat data in the 'long' format
+data_long <- data %>%
+  pivot_longer(everything(), names_to = "event", values_to = "date")
+
+## calculate incidence by type of date ('event') and plot results
+data_long %>%
+  incidence(date, groups = event) %>%
+  facet_plot(nrow = 3) +
+  geom_vline(xintercept = 31, linetype = 2) + 
+  labs(title = "Epidemic curves for different types of data",
+       subtitle = "note: no cases simulated after day 30")
+
+```
+
+
+
+
+# Illustrating the impact of delays
+
+In this part, we show the impact of the delays (incubation period and reporting)
+on the epidemic curves by date of onset at various stages of the epidemic: on
+days 10, 20, and 30.
+
+```{r impact_of_delays}
+
+# check the epicurves for reported cases on various days
+## on day 10
+data %>%
+  filter(date_report < 10) %>%
+  incidence(date_onset) %>%
+  plot() +
+  labs(title = "Epicurve by date of onset on day 10",
+       x = "Date of onset")
+
+## on day 20
+data %>%
+  filter(date_report < 20) %>%
+  incidence(date_onset) %>%
+  plot() +
+  labs(title = "Epicurve by date of onset on day 20",
+       x = "Date of onset")
+
+## on day 30
+data %>%
+  filter(date_report < 30) %>%
+  incidence(date_onset) %>%
+  plot() +
+  labs(title = "Epicurve by date of onset on day 30",
+       x = "Date of onset")
+
+```
+
+The last figure suggests a sharp decrease in cases. In fact, this decrease is
+entirely artificial, and due to the fact that many cases have not yet been
+reported.
+
+```{r real_curve_onset}
+
+## curve by date of onset
+data %>%
+  mutate(status_day_30 =
+           if_else(
+             date_report < 30,
+             "reported",
+             "not yet reported")) %>%
+  incidence(date_onset, groups = status_day_30) %>%
+  filter(date_index <= 30) %>%
+  plot(fill = status_day_30) +
+  labs(title = "Epicurve by date of onset on day 30 - with unreported cases", x
+       = "Date of onset")
+
+```
+
+The issue is even stronger when considering dates of infection.
+
+```{r real_curve_infection}
+
+## curve by date of infection
+data %>%
+  mutate(status_day_30 =
+           if_else(
+             date_report < 30,
+             "reported",
+             "not yet reported")) %>%
+  incidence(date_infection, groups = status_day_30) %>%
+  filter(date_index <= 30) %>%
+  plot(fill = status_day_30) +
+  labs(
+    title = "Epicurve by date of infection on day 30 - with unreported cases",
+    x = "Date of infection"
+    )
+```

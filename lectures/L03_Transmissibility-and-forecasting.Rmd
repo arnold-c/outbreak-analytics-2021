@@ -1,0 +1,59 @@
+---
+title: "L03 Notes"
+author: "Callum Arnold"
+date: "2021-11-24"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    number_sections: FALSE
+    code_folding: hide
+---
+
+# Group discussions
+## Uses of epicurves
+
+- Monitoring outbreaks and growth of a disease
+  - Linking growth rates and R0 to identify how the disease is spreading, and dettermine impact of potential interventions
+  - Spatial breakdown
+- Identify mode of transmission
+- Identifying which wave we're in
+- Identifying when the outbreak is over
+- Impact of interventions
+
+## Other sources of information to interpret curve
+- Seroprevalence studies
+  - Use to estimate how many cases real-time testing is catching
+- Daily webscraping from media sources to get information on daily case counts in terms of incidence and deaths
+  - Lots of provinces submit data and it's delayed due to testing capacity etc
+- Case definitions
+- Test characteristics
+- Characteristics of people infected
+
+## What are the caveats when interpreting curves
+- Delays in reporting
+  - May not be consistent during week so use rolling averages to smooth out weekend effects etc
+    - May not be sensitive enough in early stages of waves
+    - Have to be careful as sum doesn't necessarily match 
+- Mis-characterisation of cases
+  - Depends on how you're defining cases
+- Groups spatial units and strains into single curves
+- Axis scales
+- Underlying characteristics may change over time e.g. test positivity
+- Symptom onset vs date of infection?
+
+## What other the elements that we need to consider
+- Strains
+- Spatial units
+- What are we trying to convey e.g. are there better plots to use (state space plot to identify when epidemic is slowing down)?
+
+# Fitting curves
+
+- Need to plot and consider both prediction and confidence intervals
+  - Prediction intervals grow exponentially with time
+  - The confidence interval provides an estimate of where 95% of sample means will lie
+  - The prediction intervals takes into account the expected value (i.e. mean) and intervals obtained in the CIs, and adds in the variance around the mean (different to the sampling error used to create the CIs), so will be wider
+    - Even more important when using Quasi-Poisson and Negative Binomial distributions which capture overdispersion i.e. large variance
+    
+# Branching processes
+
