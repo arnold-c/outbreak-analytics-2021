@@ -1,0 +1,444 @@
+---
+title: "L04 Practical"
+author: "Callum Arnold"
+date: "2021-11-25"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    number_sections: FALSE
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.dim = c(10, 8), fig.align = "center")
+```
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(here)
+library(hrbrthemes)
+library(skimr)
+library(kableExtra)
+library(DT)
+library(outbreaks)
+library(linelist)
+library(earlyR)
+library(incidence)
+library(incidence2)
+library(i2extras)
+library(projections)
+library(epicontacts)
+library(outbreaker2)
+library(ape)
+```
+
+```{r}
+theme_set(theme_minimal())
+```
+
+# Data cleaning
+
+```{r}
+evd_linelist_raw <- here::here("data", "phm_evd_linelist_2017-11-25.xlsx") %>%
+  rio::import()
+
+evd_contacts_raw <- here::here("data", "phm_evd_contacts_2017-11-25.xlsx") %>%
+  rio::import()
+
+evd_cleaning_rules <- here::here("data", "phm_evd_cleaning_rules.xlsx") %>%
+  rio::import()
+```
+
+```{r}
+evd_linelist_raw
+evd_contacts_raw
+evd_cleaning_rules
+```
+
+```{r}
+evd_linelist <- evd_linelist_raw %>%
+  linelist::clean_data(wordlists = evd_cleaning_rules) %>%
+  mutate(across(contains("date"), guess_dates))
+```
+
+```{r}
+evd_contacts <- evd_contacts_raw %>%
+  linelist::clean_data()
+```
+
+```{r}
+evd_linelist
+evd_contacts
+```
+
+# Analysis of contacts and transmissibility
+## Analysis of contact data
+
+```{r}
+evd_chains <- make_epicontacts(
+  linelist = evd_linelist,
+  contacts = evd_contacts,
+  id = "case_id",
+  from = "source_case_id",
+  to = "case_id",
+  directed = TRUE
+)
+
+evd_chains
+```
+
+```{r}
+plot(
+  evd_chains,
+  node_color = "location",
+  node_shape = "sex",
+  shapes = c(male = "male", female = "female")
+  )
+```
+
+It seems that individuals from pseudopolis are the main sources of infection, and almost exclusively infect individuals from ank morpork, with very limited tranmission between individuals from the same location.
+
+```{r}
+get_pairwise(evd_chains, attribute = "location", f = table)
+get_pairwise(evd_chains, attribute = "location", f = table) %>%
+  chisq.test(simulate = TRUE)
+```
+
+Tabulating and calculating a test, it appears that there isn't a pattern of differential infections, just that individuals from ankh morpork are more likely to be infected.
+
+## Estimating growth rates from epidemic curves
+
+```{r}
+evd_incidence <- evd_linelist %>%
+  incidence2::incidence(
+    date_index = "date_of_onset",
+    groups = "location"
+  )
+```
+
+```{r}
+evd_poisson_fit <- evd_incidence %>%
+  i2extras::fit_curve(model = "poisson")
+```
+
+```{r}
+plot(evd_poisson_fit)
+```
+
+```{r}
+evd_poisson_growth <- i2extras::growth_rate(
+  evd_poisson_fit,
+  growth_decay_time = TRUE
+)
+```
+
+```{r}
+min_date <- min(evd_linelist$date_of_onset, na.rm = TRUE) %>%
+  format("%B %d, %Y")
+max_date <- max(evd_linelist$date_of_onset, na.rm = TRUE) %>%
+  format("%B %d, %Y")
+
+evd_poisson_growth %>%
+  ggplot(aes(x = r, y = fct_reorder(location, r))) +
+  geom_errorbar(aes(xmin = r_lower, xmax = r_upper), width = 0.2) +
+  geom_point(color = "#7c1073", size = 3) +
+  geom_vline(aes(xintercept = 0), linetype = 2, color = "#3b3b3b") +
+  labs(
+    title = "Estimated daily growth rate of Ebola in Ankh by region",
+    subtitle = glue::glue(
+      "based on symptom onset date, {min_date} - {max_date}"
+      )
+  )
+```
+
+Based on both the epidemic curve and the estimated growth rate CIs, it is not possible to tell if the outbreak is growing or shrinking. There is likely insufficient data to make a reliable estimate of the growth rate.
+
+## Estimating time-varying reproduction numbers
+
+```{r}
+evd_si <- evd_chains %>%
+  get_pairwise("date_of_onset") %>%
+  epitrix::fit_disc_gamma()
+
+evd_si
+```
+
+```{r}
+evd_Rt <- incidence::incidence(evd_linelist$date_of_onset) %>%
+  EpiEstim::estimate_R(
+    method = "parametric_si",
+    config = EpiEstim::make_config(mean_si = evd_si$mu, std_si = evd_si$sd)
+  )
+```
+
+```{r}
+plot(evd_Rt)
+```
+
+If nothing changes, it seems likely that the outbreak would continue at a relatively steady rate.
+
+# Finding who infected whom
+## Looking at Whole Genome Sequences (WGS)
+
+```{r}
+evd_dna <- read.FASTA(here::here("data", "phm_evd_wgs.fa"))
+
+evd_dna
+identical(labels(evd_dna), evd_linelist$case_id)
+```
+
+```{r}
+neighbour_join <- nj(dist.dna(evd_dna, model = "N"))
+
+neighbour_join
+```
+
+```{r}
+neighbour_join <- root(neighbour_join, 1)
+
+plot(neighbour_join, main = "Neighbour Joining tree")
+axisPhylo()
+```
+
+Here, our index case is 39e9dc, but we can see a lot of branches of length 0, which could be due to a number of reasons. For example, cases 947e40 and 601d2e could have been infected by an individual outside of out sample, or they could have been infected by 39e9dc and didn't experience any genetic substitution. As a result of these branches of length 0, it is hard to identify the source of infections for a large number of individuals.
+
+## Building delay distributions
+
+```{r}
+incub_mu <- 10.6
+incub_sd <- 7.4
+incub_cv <- incub_sd / incub_mu
+
+incub_params <- epitrix::gamma_mucv2shapescale(incub_mu, incub_cv)
+```
+
+```{r}
+evd_incubation <- distcrete::distcrete(
+  name = "gamma",
+  shape = incub_params$shape,
+  scale = incub_params$scale,
+  w = 0.5,
+  interval = 1
+)
+
+evd_incubation
+```
+
+```{r}
+tibble(days = 0:30, prob = evd_incubation$d(0:30)) %>%
+  ggplot(aes(x = days, y = prob)) +
+  geom_col() +
+  labs(
+    title = "Incubation period distribution",
+    x = "Days from infection to onset of symptoms",
+    y = "Probability"
+  )
+```
+
+```{r}
+tibble(days = 0:50, prob = evd_si$distribution$d(0:50)) %>%
+  ggplot(aes(x = days, y = prob)) +
+  geom_col() +
+  labs(
+    title = "Serial Interval distribution",
+    x = "Days between onset of symptoms in primary and secondary cases",
+    y = "Probability"
+  )
+```
+
+## Using the original `outbreaker` model
+
+```{r}
+outbreak_data <- outbreaker_data(
+  dates = evd_linelist$date_of_onset,
+  dna = unname(evd_dna),
+  w_dens = evd_si$distribution$d(1:100),
+  f_dens = evd_incubation$d(1:100)
+)
+```
+
+```{r}
+outbreak_config <- create_config(
+  move_kappa = FALSE,
+  move_pi = FALSE,
+  init_pi = 1,
+  find_import = FALSE,
+  init_tree = "star"
+)
+```
+
+```{r}
+set.seed(0)
+basic_result <- outbreaker(data = outbreak_data, config = outbreak_config)
+
+basic_result
+```
+
+```{r}
+plot(basic_result)
+```
+
+```{r}
+outbreak_plot_type <- c(
+  "trace", "density", "alpha", "t_inf"
+  )
+
+map(
+  .x = outbreak_plot_type,
+  .f = function(.x) {
+    if (.x == "density") {
+      plot(basic_result, "mu", type = .x, burn = 500)
+    } else {
+      plot(basic_result, type = .x, burn = 500)
+    }
+  }
+)
+```
+
+```{r}
+plot(basic_result, , type = "network", burn = 500, min_support = 0.05)
+```
+
+```{r}
+basic_res_summary <- summary(basic_result)
+basic_res_summary
+```
+
+```{r}
+basic_res_summary$tree  %>%
+  ggplot(aes(x = support)) +
+  geom_histogram(fill = "grey40", color = "white", bins = 12) +
+  scale_x_continuous(limits = c(0, 1)) +
+  labs(
+    title = "Consesus ancestry: support"
+  )
+```
+
+```{r}
+outbreak_temp_data <- outbreaker_data(
+  dates = evd_linelist$date_of_onset,
+  w_dens = evd_si$distribution$d(1:100),
+  f_dens = evd_incubation$d(1:100)
+)
+```
+
+```{r}
+set.seed(0)
+basic_temp_result <- outbreaker(
+  data = outbreak_temp_data, config = outbreak_config
+  )
+
+basic_temp_result
+```
+
+```{r}
+plot(basic_temp_result, type = "alpha")
+```
+
+## Adding contact data to the reconstruction process
+
+```{r}
+contact_data <- matrix(
+  match(
+    unlist(evd_chains$contacts),
+    evd_linelist$case_id
+    ),
+  ncol = 2)
+
+dim(contact_data)
+```
+
+```{r}
+outbreak_cont_data <- outbreaker_data(
+  dates = evd_linelist$date_of_onset,
+  dna = unname(evd_dna),
+  ctd = contact_data,
+  w_dens = evd_si$distribution$d(1:100),
+  f_dens = evd_incubation$d(1:100)
+)
+```
+
+```{r}
+set.seed(0)
+full_result <- outbreaker(
+  data = outbreak_cont_data, config = outbreak_config
+  )
+
+full_result
+```
+
+```{r}
+map(
+  .x = outbreak_plot_type,
+  .f = function(.x) {
+    if (.x == "density") {
+      plot(full_result, "mu", type = .x, burn = 500)
+    } else {
+      plot(full_result, type = .x, burn = 500)
+    }
+  }
+)
+```
+
+```{r}
+plot(full_result, , type = "network", burn = 500, min_support = 0.05)
+```
+
+```{r}
+full_res_summary <- summary(full_result)
+full_res_summary
+```
+
+```{r}
+full_res_summary$tree  %>%
+  ggplot(aes(x = support)) +
+  geom_histogram(fill = "grey40", color = "white", bins = 12) +
+  scale_x_continuous(limits = c(0, 1)) +
+  labs(
+    title = "Consesus ancestry: support"
+  )
+```
+
+```{r}
+full_res_summary$tree$support <- round(full_res_summary$tree$support, 2)
+
+evd_linelist$id <- 1:nrow(evd_linelist)
+```
+
+```{r}
+cons_tree <- make_epicontacts(
+  evd_linelist,
+  full_res_summary$tree[-1, ],
+  id = "id",
+  from = 1,
+  to = 2,
+  directed = TRUE
+  )
+```
+
+```{r}
+support_pal <- colorRampPalette(
+    c("#918D98", "#645877", "#423359", "#281449", "#1A0340")
+)
+
+age_pal <- colorRampPalette(
+    c("#3288BD", "#ABDDA4", "#FDAE61", "#D53E4F")
+)
+
+cons_tree$linelist$age_class <- cut(
+  cons_tree$linelist$age,
+  breaks = c(0, 10, 20, 30, 40, 90),
+  labels = c("0-10", "11-20", "21-30", "31-40", "41+")
+  )
+```
+
+```{r}
+plot(
+  cons_tree,
+  node_color = "age_class",
+  node_shape = "sex",
+  shapes = c(male = "male", female = "female")
+)
+```

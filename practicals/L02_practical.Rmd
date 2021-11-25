@@ -1,7 +1,7 @@
 ---
 title: "L02 Practical"
 author: "Callum Arnold"
-date: "2021-11-22"
+date: "2021-11-23"
 output: 
   html_document:
     toc: TRUE
@@ -46,7 +46,7 @@ skim(measles_data)
 ## Incidence
 
 ```{r}
-raw_incidence <- incidence(
+raw_incidence <- incidence2::incidence(
   measles_data,
   date_of_prodrome,
   interval = "week",
